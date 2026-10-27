@@ -1,7 +1,6 @@
 import os
 import json
 import logging
-import threading
 from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
@@ -12,18 +11,7 @@ logging.basicConfig(level=logging.INFO)
 TOKEN = "8974193543:AAElkOFGzTLey2tnEHfFNXGlWEYIOW2_DPM"
 ADMIN_IDS = [8600070245, 8553277647]
 
-# 1. Flask 서버 (Render 수면 방지용)
-app = Flask('')
-
-@app.route('/')
-def home():
-    return "Bot is alive!"
-
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
-
-# 2. 데이터 저장/로드 로직
+# 1. 데이터 저장/로드 로직 (JSON)
 DATA_FILE = "user_counts.json"
 
 def load_data():
@@ -39,10 +27,10 @@ def save_data():
 
 user_data = load_data()
 
-# /my를 입력하여 숫자 입력 대기 중인 유저 세션 {user_id: True}
+# /my를 입력하여 숫자 입력 대기 중인 유저 세션
 pending_users = {}
 
-# 3. 텔레그램 봇 기능 정의
+# 2. 텔레그램 봇 기능 정의
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_name = update.effective_user.first_name
@@ -75,7 +63,7 @@ async def my_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pending_users[user_id] = True  # 대기 상태 켜기
 
     await update.message.reply_text(
-        f"📊 {user_name}님의 현재 누적 인증: **{count}회**\n\n"
+        f"📊 {user_name}님의 현재 누적 인증: {count}회\n\n"
         f"✏️ 추가할 인증 횟수(숫자)를 메시지로 보내주세요!"
     )
 
@@ -97,8 +85,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pending_users[user_id] = False
 
             await update.message.reply_text(
-                f"✅ **{amount}회** 인증이 완료되었습니다!\n"
-                f"👤 {user_name}님의 총 누적 인증: **{user_data[user_id]['count']}회**"
+                f"✅ {amount}회 인증이 완료되었습니다!\n"
+                f"👤 {user_name}님의 총 누적 인증: {user_data[user_id]['count']}회"
             )
         else:
             await update.message.reply_text("⚠️ 숫자만 입력해 주세요! (/my를 다시 누르시면 취소됩니다)")
@@ -130,12 +118,23 @@ async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("🔄 **모든 사용자의 인증 횟수가 0으로 초기화되었습니다.**")
 
-# 4. 앱 실행
-if __name__ == '__main__':
-    t_flask = threading.Thread(target=run_flask)
-    t_flask.daemon = True
-    t_flask.start()
+# 3. 앱 실행 (Web Service 구동 지원)
+app = Flask(__name__)
 
+@app.route('/')
+def health_check():
+    return "Bot is running!"
+
+def main():
+    import threading
+    port = int(os.environ.get("PORT", 8080))
+    
+    # Flask 서버를 백그라운드에서 실행
+    flask_thread = threading.Thread(target=lambda: app.run(host="0.0.0.0", port=port, use_reloader=False))
+    flask_thread.daemon = True
+    flask_thread.start()
+
+    # 텔레그램 봇 실행
     tg_app = ApplicationBuilder().token(TOKEN).build()
 
     tg_app.add_handler(CommandHandler("start", start))
@@ -145,5 +144,7 @@ if __name__ == '__main__':
     tg_app.add_handler(CommandHandler("reset_all", reset_all))
     tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    tg_app.run_polling()
+    tg_app.run_polling(drop_pending_updates=True)
 
+if __name__ == '__main__':
+    main()
